@@ -4,9 +4,21 @@ import json
 import sys
 from pathlib import Path
 
-from .models import RoomInput
-from .solver import solve
-from .visualize import render_solution
+# 兼容两种运行方式：
+#   python -m src.main examples/example1.json   （以模块方式运行，推荐）
+#   python src/main.py examples/example1.json   （直接运行脚本）
+# 相对导入 from .models 只在作为包一部分（-m 方式）时可用；
+# 直接运行脚本时 __package__ 为空，需要先把项目根目录加进 sys.path，
+# 再按 src.xxx 的绝对包路径导入。
+if __package__ in (None, ""):
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+    from src.models import RoomInput
+    from src.solver import solve
+    from src.visualize import render_solution
+else:
+    from .models import RoomInput
+    from .solver import solve
+    from .visualize import render_solution
 
 
 def load_problem(path: Path) -> RoomInput:
