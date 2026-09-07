@@ -75,23 +75,31 @@ def item_candidates(room: Polygon, item: ItemSpec, door_obstacles: List[Polygon]
     for rotation in rotations:
         half_l = item.length / 2.0
         half_w = item.width / 2.0
+        rot_rad = math.radians(rotation)
+        ux, uy = math.cos(rot_rad), math.sin(rot_rad)   # length 方向单位向量
+        vx, vy = -math.sin(rot_rad), math.cos(rot_rad)  # width 方向单位向量
         for edge_a, edge_b in polygon_edges(list(room.exterior.coords)):
             if edge_length(edge_a, edge_b) <= EPS:
                 continue
             ex, ey = edge_direction(edge_a, edge_b)
             nx, ny = -ey, ex
-            edge_ang = segment_angle(edge_a, edge_b)
-            # wall-adjacent candidates
-            wall_dir = (ex, ey)
+            # 法线必须指向房间内部，否则这面墙的贴墙候选会生成在墙外被全面丢弃
+            mid = ((edge_a[0] + edge_b[0]) / 2.0, (edge_a[1] + edge_b[1]) / 2.0)
+            if not room.buffer(EPS).covers(Point(mid[0] + nx * 5.0, mid[1] + ny * 5.0)):
+                nx, ny = -nx, -ny
+            # 贴墙时中心沿法线内缩的距离 = 物品在法线方向上的半尺寸。
+            # 法线与 length 轴对齐 -> half_l；与 width 轴对齐 -> half_w。
+            # 原先无条件用 half_w，物品旋转 90° 后贴墙点算错被丢弃，导致退化为网格撒点、不贴墙。
+            half_normal = half_l if abs(nx * ux + ny * uy) >= abs(nx * vx + ny * vy) else half_w
             wall_len = edge_length(edge_a, edge_b)
             samples = max(1, int(wall_len // step))
             for i in range(samples + 1):
                 t = 0 if samples == 0 else i / samples
-                px = edge_a[0] + wall_dir[0] * wall_len * t
-                py = edge_a[1] + wall_dir[1] * wall_len * t
+                px = edge_a[0] + ex * wall_len * t
+                py = edge_a[1] + ey * wall_len * t
                 inward_center = (
-                    px + nx * half_w,
-                    py + ny * half_w,
+                    px + nx * half_normal,
+                    py + ny * half_normal,
                 )
                 rect = rotate_rectangle(inward_center, item.length, item.width, rotation)
                 if room.buffer(EPS).covers(rect) and all(not rect.intersects(obs) for obs in door_obstacles):
@@ -132,23 +140,33 @@ def dominant_room_angle(room: Polygon) -> float:
     return best
 
 
-def fridge_keepout(candidate: Candidate, item: ItemSpec) -> Polygon:
-    # Conservative keep-out in front of the fridge along the positive local y direction.
-    front_depth = max(item.width, 600.0)
-    base = rotate_rectangle(candidate.center, item.length, item.width, candidate.rotation)
-    # Build a keep-out strip extending from the front edge.
+def fridge_keepout(room: Polygon, candidate: Candidate, item: ItemSpec) -> Polygon:
+    # 题目要求：冰箱 length 的其中一边为开门边，开门边不能放任何东西。
+    # 因此禁放区必须位于 length 端面外侧（而不是原先的 width 端面外侧）。
+    # 冰箱可能在墙边，门只能朝房间内部开，所以取 length 两端中
+    # 禁放条带深入房间内部更多（离墙更远）的那一端。
+    front_depth = max(item.length, 600.0)
     cx, cy = candidate.center
     ang = math.radians(candidate.rotation)
-    ux, uy = math.cos(ang), math.sin(ang)
-    vx, vy = -math.sin(ang), math.cos(ang)
+    ux, uy = math.cos(ang), math.sin(ang)      # length 方向
+    vx, vy = -math.sin(ang), math.cos(ang)     # width 方向
     half_l = item.length / 2.0
     half_w = item.width / 2.0
-    front_mid = (cx + vx * half_w, cy + vy * half_w)
-    p0 = (front_mid[0] - ux * half_l, front_mid[1] - uy * half_l)
-    p1 = (front_mid[0] + ux * half_l, front_mid[1] + uy * half_l)
-    p2 = (p1[0] + vx * front_depth, p1[1] + vy * front_depth)
-    p3 = (p0[0] + vx * front_depth, p0[1] + vy * front_depth)
-    return Polygon([p0, p1, p2, p3])
+
+    def build(sign: float) -> Polygon:
+        front_mid = (cx + ux * sign * half_l, cy + uy * sign * half_l)
+        p0 = (front_mid[0] - vx * half_w, front_mid[1] - vy * half_w)
+        p1 = (front_mid[0] + vx * half_w, front_mid[1] + vy * half_w)
+        p2 = (p1[0] + ux * sign * front_depth, p1[1] + uy * sign * front_depth)
+        p3 = (p0[0] + ux * sign * front_depth, p0[1] + uy * sign * front_depth)
+        return Polygon([p0, p1, p2, p3])
+
+    strip_pos = build(+1.0)
+    strip_neg = build(-1.0)
+    inner_ref = room.buffer(EPS)
+    if inner_ref.intersection(strip_pos).area >= inner_ref.intersection(strip_neg).area:
+        return strip_pos
+    return strip_neg
 
 
 def can_place(candidate: Candidate, room: Polygon, placed: List[Placement], obstacles: List[Polygon]) -> bool:
@@ -198,7 +216,7 @@ def solve(room_input: RoomInput) -> SolveResult:
             )
             pushed = False
             if item.kind == "fridge":
-                extra_obstacles.append(fridge_keepout(cand, item))
+                extra_obstacles.append(fridge_keepout(room, cand, item))
                 pushed = True
             if dfs(idx + 1):
                 return True

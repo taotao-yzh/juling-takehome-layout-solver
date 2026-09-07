@@ -44,7 +44,7 @@ def render_solution(problem: RoomInput, placements: List[Placement], output_path
         if placement.name.startswith("fridge"):
             dummy_candidate = type("DummyCandidate", (), {"center": placement.center, "rotation": placement.rotation})()
             dummy_item = type("DummyItem", (), {"length": placement.length, "width": placement.width})()
-            keepout = fridge_keepout(dummy_candidate, dummy_item)
+            keepout = fridge_keepout(room, dummy_candidate, dummy_item)
             _add_poly(ax, keepout, facecolor="#f28e2b", edgecolor="#b45309", alpha=0.18, linestyle="--")
 
     xs = [p[0] for p in problem.boundary]
